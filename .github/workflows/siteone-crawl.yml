@@ -7,8 +7,9 @@ on:
         description: Website to crawl
         required: true
         default: https://fabrockers.com
+
       max_pages:
-        description: Maximum pages/URLs to visit
+        description: Maximum URLs to crawl
         required: true
         default: "25000"
 
@@ -17,36 +18,73 @@ permissions:
 
 jobs:
   crawl:
-    # Public repositories get standard GitHub-hosted runner usage free.
+    name: Crawl Dr.Fabs Website
     runs-on: ubuntu-24.04
     timeout-minutes: 360
 
     steps:
+
+      # STEP 1: INSTALL SITEONE CRAWLER
       - name: Install SiteOne Crawler
         shell: bash
         run: |
-          curl -1sLf 'https://dl.cloudsmith.io/public/janreges/siteone-crawler/setup.deb.sh' | sudo -E bash
+          set -e
+
+          curl -1sLf \
+            'https://dl.cloudsmith.io/public/janreges/siteone-crawler/setup.deb.sh' \
+            | sudo -E bash
+
           sudo apt-get update
+
           sudo apt-get install -y siteone-crawler
-          siteone-crawler --version
 
+          echo "Checking installation..."
+
+          dpkg-query -W -f='${Status} ${Version}\n' siteone-crawler
+
+          echo "SiteOne Crawler installed successfully!"
+
+      # STEP 2: PREPARE DIRECTORIES
       - name: Prepare report directory
-        run: mkdir -p reports crawler-data
+        shell: bash
+        run: |
+          mkdir -p reports
+          mkdir -p crawler-data/results
 
+          echo "Report directories created."
+
+      # STEP 3: CRAWL WEBSITE
       - name: Crawl website and generate reports
         shell: bash
+
         env:
           TARGET_URL: ${{ inputs.target_url }}
           MAX_PAGES: ${{ inputs.max_pages }}
+
         run: |
-          set -o pipefail
+          set -euo pipefail
+
+          # Validate input
+          if ! [[ "$MAX_PAGES" =~ ^[0-9]+$ ]]; then
+            echo "Invalid maximum URL count."
+            exit 1
+          fi
+
+          echo "=================================="
+          echo "       DR.FABS SEO CRAWLER"
+          echo "=================================="
+
+          echo "Website: $TARGET_URL"
+          echo "Maximum URLs: $MAX_PAGES"
+
           siteone-crawler \
             --url="$TARGET_URL" \
             --max-visited-urls="$MAX_PAGES" \
             --max-queue-length="$MAX_PAGES" \
             --max-skipped-urls="$MAX_PAGES" \
             --workers=3 \
-            --max-reqs-per-sec=5 \
+            --max-reqs-per-sec=3 \
+            --timeout=15 \
             --memory-limit=10G \
             --result-storage=file \
             --result-storage-dir=crawler-data/results \
@@ -54,11 +92,38 @@ jobs:
             --output-json-file=reports/drfabs-full-site-data.json \
             --output-text-file=reports/drfabs-full-site-summary.txt
 
+          echo "=================================="
+          echo "       CRAWL COMPLETED"
+          echo "=================================="
+
+          ls -lh reports/
+
+      # STEP 4: UPLOAD REPORTS
       - name: Upload crawl reports
         if: always()
+
         uses: actions/upload-artifact@v4
+
         with:
           name: drfabs-siteone-crawl-reports
+
           path: reports/
+
           if-no-files-found: warn
+
           retention-days: 7
+
+      # STEP 5: UPLOAD CRAWLER DATA
+      - name: Upload crawler data
+        if: always()
+
+        uses: actions/upload-artifact@v4
+
+        with:
+          name: drfabs-crawler-raw-data
+
+          path: crawler-data/
+
+          if-no-files-found: warn
+
+          retention-days: 3
